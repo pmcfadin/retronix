@@ -1,0 +1,30 @@
+schema: spec-driven
+
+context: |
+  RetroNix: a custom CP/M BIOS plus Unix-flavored shell for real 8080/Z80
+  hardware (TRS-80, S-100), backed by a serial-connected server that acts as
+  filesystem, software library, and ROM foundry. The PRD is docs/RetroNix-PRD.md;
+  read it before drafting proposals. Five pillars: real CPU only (no emulation
+  of the machine's own code), Unix feel over CP/M, a boot ladder that never
+  dead-ends, server as filesystem + library, server as ROM foundry.
+  Domain vocabulary lives in CONTEXT.md; decisions in docs/adr/ (see
+  docs/agents/domain.md). Emulator-first development against SIMH AltairZ80.
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
