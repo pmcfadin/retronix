@@ -1,0 +1,17 @@
+{
+  "volumes": {
+    "library": {
+      "path": "volumes/library",
+      "kind": "shared"
+    }
+  },
+  "machines": {
+    "1001": {
+      "make": "MITS",
+      "model": "Altair 8800 (SIMH AltairZ80)",
+      "drive_map": {
+        "A": "library"
+      }
+    }
+  }
+}

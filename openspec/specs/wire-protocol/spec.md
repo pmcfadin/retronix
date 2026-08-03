@@ -1,0 +1,56 @@
+# wire-protocol Specification
+
+## Purpose
+TBD - created by archiving change m0-spine. Update Purpose after archive.
+## Requirements
+### Requirement: Length-prefixed binary frames
+Every message SHALL be a binary frame: a fixed header (format/version byte, function code byte, 16-bit payload length), followed by the raw payload, followed by a checksum. Payloads MUST NOT be escaped or encoded — any byte value is legal anywhere in the payload.
+
+#### Scenario: Well-formed frame is accepted
+- **WHEN** the server receives a frame whose length field matches the payload and whose checksum verifies
+- **THEN** the server processes the request and answers with exactly one response frame
+
+#### Scenario: Corrupt frame is rejected in-band
+- **WHEN** the server receives a frame whose checksum does not verify
+- **THEN** the server answers with an error response frame (bad-frame code) and remains ready for the next request
+
+### Requirement: Machine-initiated, one outstanding request
+The machine SHALL initiate every exchange; the server MUST NOT send unprompted frames. The machine MUST NOT send a new request before receiving the response (or timing out) on the previous one.
+
+#### Scenario: Server stays silent between requests
+- **WHEN** no request frame is in flight
+- **THEN** the server sends no bytes on the wire
+
+### Requirement: HELLO opens every session
+The first request after boot SHALL be a HELLO carrying the machine ID, ROM version, and self-test inventory. The success response SHALL carry the profile's current drive map.
+
+#### Scenario: Known machine receives its drive map
+- **WHEN** a machine sends HELLO with a machine ID that matches a server-side profile
+- **THEN** the response contains the profile's drive map binding at least one drive letter to a volume
+
+#### Scenario: Unknown machine is refused cleanly
+- **WHEN** a machine sends HELLO with a machine ID the server has no profile for
+- **THEN** the response is an error frame (unknown-machine code), and the server logs the refusal
+
+### Requirement: DIR verb lists a bound volume
+The DIR request SHALL name a drive letter from the machine's drive map and SHALL return the file entries (name, extension, size) of the bound volume. DIR MUST be idempotent.
+
+#### Scenario: DIR on a bound drive returns entries
+- **WHEN** the machine sends DIR for a drive letter bound in its HELLO response
+- **THEN** the response lists every file on the bound volume with name and size
+
+#### Scenario: DIR on an unbound drive is an error
+- **WHEN** the machine sends DIR for a drive letter its drive map does not bind
+- **THEN** the response is an error frame (unbound-drive code)
+
+#### Scenario: Retry yields identical result
+- **WHEN** the machine times out and re-sends an identical DIR request
+- **THEN** the response content is identical to what the lost response would have carried
+
+### Requirement: Errors are in-band response codes
+Every failure the server can detect SHALL be reported as a response frame carrying an error code from a defined table. Error codes MUST be mappable onto honest BDOS error returns by the machine side.
+
+#### Scenario: Error table is closed
+- **WHEN** any request fails for any reason
+- **THEN** the error code in the response is one of the codes defined in the version-0 table
+
