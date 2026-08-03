@@ -18,7 +18,10 @@ test:
 	$(PYTHON) -m unittest discover -s server/tests -t . -v
 
 m0: image
-	$(PYTHON) harness/run_m0.py
+	$(PYTHON) harness/run_proof.py
+
+play:
+	harness/play.sh
 
 tools:
 	tools/build-tools.sh

@@ -36,6 +36,14 @@ RESULT_NAMES = {
     RFNF: "file-not-found",
 }
 
+# HELLO is re-issuable at any time: on a fresh connection, on a reconnected
+# one, or on a session that has already completed a HELLO. It is idempotent —
+# a repeat from the same machine ID is a valid request answered with the
+# drive map as it stands, never an error for having been asked twice, and the
+# session stays usable for DIR and READ afterwards. This is what lets the
+# machine's `bind` recover a dropped link in one command; it adds no verb,
+# code, or payload.
+
 # FREAD request payload — 18 bytes:
 #   drive index (1), name 8 + ext 3 space-padded (11),
 #   offset 4 LE, length 2 LE

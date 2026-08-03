@@ -36,7 +36,7 @@ timing-sensitive under CPU contention).
    the command that proves its slice (e.g. `make test`, `make image`).
    Agents report summaries; they do not commit.
 4. **Verify** (subagents): one agent runs the full harness proof
-   (`python3 harness/run_m0.py --runs 10`); in parallel,
+   (`python3 harness/run_proof.py --runs 10`); in parallel,
    `/mattpocock-skills:code-review` reviews the diff since the milestone's
    base commit — its Spec axis reads the OpenSpec change per
    `issue-tracker.md`.

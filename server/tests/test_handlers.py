@@ -76,6 +76,23 @@ class HelloTests(ServerFixture):
         self.assertIsNone(self.session.profile)
         self.assertEqual(self.log_records()[-1]["result"], "unknown-machine")
 
+    def test_repeat_hello_is_idempotent(self):
+        first = self.rpc(p.FHELLO, hello_payload())
+        second = self.rpc(p.FHELLO, hello_payload())
+        self.assertEqual(first, second)
+        for fn, body in (first, second):
+            self.assertEqual(fn, p.FHELLO | p.FRESP)
+            self.assertEqual(body[0], p.ROK)
+            self.assertEqual(body[1], 1)          # the drive map came back
+            name_len = body[5]
+            self.assertEqual(body[6:6 + name_len], b"library")
+        # the session still serves DIR after the second HELLO
+        fn, body = self.rpc(p.FDIR, bytes((0,)))
+        self.assertEqual(body[0], p.ROK)
+        self.assertEqual(int.from_bytes(body[1:3], "little"), 3)
+        verbs = [r["verb"] for r in self.log_records()]
+        self.assertEqual(verbs, ["hello", "hello", "dir"])
+
     def test_malformed_hello(self):
         fn, body = self.rpc(p.FHELLO, b"\x01\x02")
         self.assertEqual(body[0], p.RBADREQ)

@@ -1,28 +1,4 @@
-# machine-boot Specification
-
-## Purpose
-TBD - created by archiving change m0-spine. Update Purpose after archive.
-## Requirements
-### Requirement: Banner on boot
-The BIOS SHALL print a RetroNix banner (name and ROM version) on the console as its first visible act after power-on.
-
-#### Scenario: Cold boot shows the banner
-- **WHEN** the machine image is booted in SIMH AltairZ80
-- **THEN** the console shows the RetroNix banner including a ROM version string
-
-### Requirement: Serial link initialized from burned link config
-The BIOS SHALL initialize the serial port using link config baked into the boot image at build (mint) time. The machine ID SHALL likewise be baked in, not entered at runtime.
-
-#### Scenario: Link comes up without operator input
-- **WHEN** the machine boots with a server listening on the configured serial channel
-- **THEN** the link is usable for HELLO with no operator interaction
-
-### Requirement: Self-test inventory
-Boot SHALL collect a device inventory (at minimum: CPU type detected, RAM size, serial port status) before attempting HELLO, and the inventory SHALL be included in the HELLO payload.
-
-#### Scenario: Inventory reaches the server
-- **WHEN** the machine completes HELLO
-- **THEN** the server's log shows the machine's inventory fields populated
+## MODIFIED Requirements
 
 ### Requirement: HELLO at boot, local-only on failure
 A configured machine SHALL send HELLO during boot. If HELLO fails (timeout after bounded retries, or an error response), the machine SHALL still land at a usable prompt in local-only mode — never a dead end, no reboot required to retry.
@@ -49,12 +25,7 @@ On success the machine SHALL retain the **complete** Drive Map the response carr
 - **WHEN** HELLO succeeds but the response binds no drive letters
 - **THEN** the machine is linked, reports zero network bindings, and does not claim local-only mode
 
-### Requirement: Minimal prompt with dir
-The monitor SHALL present a prompt accepting at minimum a `dir` command, which issues the wire DIR verb for a bound drive and prints the returned entries.
-
-#### Scenario: dir round trip
-- **WHEN** the operator types `dir` at the prompt after a successful HELLO
-- **THEN** the console prints the file listing of the bound volume as returned by the server
+## ADDED Requirements
 
 ### Requirement: ls /dev lists devices and bind states
 `/dev` is synthetic and read-only (ADR-0004): it is generated from what the self-test found and from the retained Drive Map, and it is never a place files can be written or created. `ls /dev` SHALL touch neither the wire nor any disk, and SHALL print:
@@ -117,4 +88,3 @@ On success the machine SHALL replace the retained Drive Map with the response's 
 #### Scenario: Bind while already linked refreshes the map
 - **WHEN** the operator types `bind` with the link already up
 - **THEN** the machine re-runs HELLO and adopts the drive map from the new response, replacing the previously retained one
-

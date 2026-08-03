@@ -39,6 +39,13 @@ RFNF	equ	05h		; FREAD for a file absent from the volume
 ;   entry: drive index (0=A..15=P), kind (0=network), flags (bit0=read-only),
 ;          name length, volume name bytes
 ;
+; HELLO is re-issuable at any time: on a fresh connection, on a reconnected
+; one, or on a session that has already completed a HELLO. It is idempotent —
+; a repeat from the same machine id is a valid request answered with the
+; drive map as it stands, never an error for having been asked twice, and the
+; session stays usable for DIR and READ afterwards. This is what lets `bind`
+; recover a dropped link in one command; it adds no verb, code, or payload.
+;
 ; DIR request payload — 1 byte: drive index
 ; DIR OK payload: [ROK][count-lo][count-hi][entries...]
 ;   entry: name 8 bytes space-padded, ext 3 bytes space-padded,
