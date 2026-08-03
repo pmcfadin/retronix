@@ -11,6 +11,7 @@ PVER	equ	01h		; protocol version 0 wire tag
 ; Function codes — requests (machine -> server)
 FHELLO	equ	01h
 FDIR	equ	02h
+FREAD	equ	03h
 
 ; Responses carry (request code | 80h); payload byte 0 is the result code.
 FRESP	equ	80h		; OR-mask for response function codes
@@ -22,6 +23,12 @@ RBADFRM	equ	01h		; checksum/length failure
 RUNKMCH	equ	02h		; HELLO from a machine ID with no profile
 RUNBND	equ	03h		; DIR for a drive letter the map does not bind
 RBADREQ	equ	04h		; well-framed but malformed payload
+RFNF	equ	05h		; FREAD for a file absent from the volume
+
+; FREAD request payload — 18 bytes:
+;   drive index (1), name 8 + ext 3 space-padded (11),
+;   offset 4 little-endian, length 2 little-endian
+; FREAD OK payload: [ROK][actual-lo][actual-hi][bytes...]
 
 ; HELLO request payload — 10 bytes
 ;   machine id     4 bytes little-endian

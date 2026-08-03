@@ -13,6 +13,7 @@ PVER = 0x01  # protocol version 0 wire tag
 # Function codes — requests (machine -> server)
 FHELLO = 0x01
 FDIR = 0x02
+FREAD = 0x03
 
 # Responses carry (request code | 0x80); payload byte 0 is the result code.
 FRESP = 0x80
@@ -24,6 +25,7 @@ RBADFRM = 0x01  # checksum/length failure
 RUNKMCH = 0x02  # HELLO from a machine ID with no profile
 RUNBND = 0x03   # DIR for a drive letter the map does not bind
 RBADREQ = 0x04  # well-framed but malformed payload
+RFNF = 0x05     # FREAD for a file absent from the bound volume
 
 RESULT_NAMES = {
     ROK: "ok",
@@ -31,7 +33,14 @@ RESULT_NAMES = {
     RUNKMCH: "unknown-machine",
     RUNBND: "unbound-drive",
     RBADREQ: "bad-request",
+    RFNF: "file-not-found",
 }
+
+# FREAD request payload — 18 bytes:
+#   drive index (1), name 8 + ext 3 space-padded (11),
+#   offset 4 LE, length 2 LE
+# FREAD OK payload: [ROK][actual-lo][actual-hi][bytes...]
+FREAD_REQ_LEN = 18
 
 HEADER_LEN = 4
 MAX_PAYLOAD = 0xFFFF

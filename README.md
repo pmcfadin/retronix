@@ -21,19 +21,26 @@ macOS arm64, 2026-08-02:
 - **AltairZ80, Open SIMH V4.1-0** (commit a1f57fa3) — built `NOVIDEO=1`
 - **Python 3** — system interpreter, stdlib only
 
-## M0 — the spine
+## Proof: the spine and the filesystem
 
 `make m0` proves the spine: boot banner → HELLO against a machine profile →
 drive map returned → `dir` on a bound volume, all under SIMH with the wire
 on a TCP socket. Success is asserted against the server's structured JSONL
-log, never scraped terminal text. Proven 10× consecutive green
-(`python3 harness/run_m0.py --runs 10`) on 2026-08-02.
+log, never scraped terminal text. Proven 10× consecutive green across all
+five scenarios (`python3 harness/run_m0.py --runs 10`) on 2026-08-02.
 
-Each pass runs three scenarios:
+Each pass runs five scenarios:
 
 - **spine** — the M0 exchange end to end; the oracle log must show exactly
   one `hello` (machine 1001, inventory populated, `A: → library`) and one
   `dir` (`result: ok`, entry count matching the volume directory).
+- **run-com** — `run hello.com` and `run big.com` fetched over the wire
+  execute on the local CPU (genuine BDOS function-9 calls through the shim
+  at 0005h); the oracle must show FREAD offsets tiling each file exactly
+  (BIG.COM: 0, 512, 1024).
+- **type-missing** — `type about.txt` prints over the wire; `run nope.com`
+  reports file-not-found on the console with the matching `file-not-found`
+  oracle record.
 - **server-down** — no server on the wire; the machine must land at the
   local-only prompt (never dead-end).
 - **unknown-machine** — the server refuses an unprofiled machine ID with a
@@ -42,11 +49,11 @@ Each pass runs three scenarios:
 Expected oracle shape for the spine scenario:
 
 ```json
-{"verb": "hello", "machine_id": 1001, "rom_version": "0.1.0",
+{"verb": "hello", "machine_id": 1001, "rom_version": "0.2.0",
  "inventory": {"cpu": "8080", "ram_kb": 63, "serial_up": true},
  "drive_map": {"A": "library"}, "result": "ok", "ts": ...}
 {"verb": "dir", "machine_id": 1001, "drive": "A", "volume": "library",
- "entry_count": 2, "result": "ok", "ts": ...}
+ "entry_count": 3, "result": "ok", "ts": ...}
 ```
 
 (RAM honestly reads 63 KB: the sim's boot-ROM page occupies the top KB and

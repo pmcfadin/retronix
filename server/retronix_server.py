@@ -16,6 +16,27 @@ import protocol as p
 
 DRIVE_NAMES = "ABCDEFGHIJKLMNOP"
 
+# The practical CP/M filename charset. The volume root is the trust
+# boundary: requests are allowlisted before any path is ever formed.
+NAME_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$_-")
+
+
+def parse_83(raw: bytes) -> str | None:
+    """Validate an 11-byte space-padded 8.3 field -> 'STEM.EXT' or None."""
+    if len(raw) != 11:
+        return None
+    try:
+        stem, ext = raw[:8].decode("ascii"), raw[8:].decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    stem, ext = stem.rstrip(" "), ext.rstrip(" ")
+    if not stem:
+        return None
+    for part in (stem, ext):
+        if any(c not in NAME_CHARS for c in part):
+            return None
+    return f"{stem}.{ext}" if ext else stem
+
 
 def to_83(path: pathlib.Path) -> tuple[str, str]:
     """Map a host filename onto a CP/M 8.3 uppercase name."""
@@ -37,6 +58,17 @@ class Volume:
                 stem, ext = to_83(f)
                 out.append((stem, ext, f.stat().st_size))
         return out
+
+    def read(self, name83: str, offset: int, length: int) -> bytes | None:
+        """Bytes at [offset, offset+length) of the named file, or None if
+        absent. Short (or empty) result past EOF — never an error."""
+        for f in sorted(self.root.iterdir()):
+            if f.is_file() and not f.name.startswith("."):
+                stem, ext = to_83(f)
+                if (f"{stem}.{ext}" if ext else stem) == name83:
+                    data = f.read_bytes()
+                    return data[offset:offset + length]
+        return None
 
 
 class Profile:
@@ -90,6 +122,8 @@ class Server:
             return self.handle_hello(session, payload)
         if function == p.FDIR:
             return self.handle_dir(session, payload)
+        if function == p.FREAD:
+            return self.handle_fread(session, payload)
         self.log(verb=f"unknown-0x{function:02x}", machine_id=None,
                  result=p.RESULT_NAMES[p.RBADREQ])
         return p.encode(function | p.FRESP, bytes((p.RBADREQ,)))
@@ -154,6 +188,38 @@ class Server:
                  volume=vol.name, entry_count=len(entries),
                  result=p.RESULT_NAMES[p.ROK])
         return p.encode(p.FDIR | p.FRESP, bytes(body))
+
+    def handle_fread(self, session: Session, payload: bytes) -> bytes:
+        machine_id = session.profile.machine_id if session.profile else None
+        if session.profile is None or len(payload) != p.FREAD_REQ_LEN:
+            self.log(verb="fread", machine_id=machine_id,
+                     result=p.RESULT_NAMES[p.RBADREQ])
+            return p.encode(p.FREAD | p.FRESP, bytes((p.RBADREQ,)))
+        drive_index = payload[0]
+        letter = DRIVE_NAMES[drive_index] if drive_index < 16 else "?"
+        name = parse_83(payload[1:12])
+        offset = int.from_bytes(payload[12:16], "little")
+        length = int.from_bytes(payload[16:18], "little")
+        vol = session.profile.drive_map.get(letter)
+        if vol is None:
+            self.log(verb="fread", machine_id=machine_id, drive=letter,
+                     result=p.RESULT_NAMES[p.RUNBND])
+            return p.encode(p.FREAD | p.FRESP, bytes((p.RUNBND,)))
+        if name is None:
+            self.log(verb="fread", machine_id=machine_id, drive=letter,
+                     result=p.RESULT_NAMES[p.RBADREQ], reason="bad 8.3 name")
+            return p.encode(p.FREAD | p.FRESP, bytes((p.RBADREQ,)))
+        data = vol.read(name, offset, length)
+        if data is None:
+            self.log(verb="fread", machine_id=machine_id, drive=letter,
+                     file=name, offset=offset, requested=length,
+                     result=p.RESULT_NAMES[p.RFNF])
+            return p.encode(p.FREAD | p.FRESP, bytes((p.RFNF,)))
+        self.log(verb="fread", machine_id=machine_id, drive=letter,
+                 file=name, offset=offset, requested=length,
+                 actual=len(data), result=p.RESULT_NAMES[p.ROK])
+        body = bytes((p.ROK,)) + len(data).to_bytes(2, "little") + data
+        return p.encode(p.FREAD | p.FRESP, body)
 
     # -- socket loop ------------------------------------------------------
 

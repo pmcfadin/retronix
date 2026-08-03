@@ -168,6 +168,80 @@ def scenario_spine(workdir: pathlib.Path) -> Scenario:
     return sc
 
 
+def file_size(name: str) -> int:
+    return (VOLUME / name).stat().st_size
+
+
+def assert_tiling(sc: Scenario, name: str, size: int):
+    """The FREAD offsets for `name` must tile the file exactly."""
+    reads = [r for r in sc.records()
+             if r["verb"] == "fread" and r.get("file") == name]
+    if any(r["result"] != "ok" for r in reads):
+        sc.fail(f"oracle: non-ok fread for {name}: {reads}")
+        return
+    offsets = [r["offset"] for r in reads]
+    if offsets != sorted(offsets) or (offsets and offsets[0] != 0):
+        sc.fail(f"oracle: {name} offsets don't start at 0 ascending: {offsets}")
+        return
+    expect_off = 0
+    for r in reads:
+        if r["offset"] != expect_off:
+            sc.fail(f"oracle: {name} offset gap at {r['offset']} (expected {expect_off})")
+            return
+        expect_off += r["actual"]
+    if expect_off != size:
+        sc.fail(f"oracle: {name} reads total {expect_off}, file is {size}")
+
+
+def scenario_run_com(workdir: pathlib.Path) -> Scenario:
+    """The payoff: COM files fetched over the wire execute on the CPU."""
+    sc = Scenario("run-com", workdir)
+    port = free_port()
+    try:
+        sc.start_server(port)
+        code = sc.run_sim(base_ini(port) + "\n".join([
+            'expect "retronix> " send "run hello.com\\r"; continue',
+            'expect "WORLD FROM RETRONIX" send "\\rrun big.com\\r"; continue',
+            'expect "BIG OK" exit 0',
+            "go 0",
+            "exit 1",
+        ]) + "\n")
+        if code != 0:
+            sc.fail(f"sim exited {code}: COM programs didn't run")
+        assert_tiling(sc, "HELLO.COM", file_size("HELLO.COM"))
+        assert_tiling(sc, "BIG.COM", file_size("BIG.COM"))
+    finally:
+        sc.teardown()
+    return sc
+
+
+def scenario_type_missing(workdir: pathlib.Path) -> Scenario:
+    sc = Scenario("type-missing", workdir)
+    port = free_port()
+    try:
+        sc.start_server(port)
+        code = sc.run_sim(base_ini(port) + "\n".join([
+            'expect "retronix> " send "type about.txt\\r"; continue',
+            'expect "M0 fixture" send "\\rrun nope.com\\r"; continue',
+            'expect "file not found" exit 0',
+            "go 0",
+            "exit 1",
+        ]) + "\n")
+        if code != 0:
+            sc.fail(f"sim exited {code}: type/missing-file flow failed")
+        types = [r for r in sc.records()
+                 if r["verb"] == "fread" and r.get("file") == "ABOUT.TXT"]
+        if not types or types[0]["result"] != "ok":
+            sc.fail(f"oracle: expected ok ABOUT.TXT read, got {types}")
+        missing = [r for r in sc.records()
+                   if r["verb"] == "fread" and r.get("file") == "NOPE.COM"]
+        if not missing or missing[-1]["result"] != "file-not-found":
+            sc.fail(f"oracle: expected file-not-found for NOPE.COM, got {missing}")
+    finally:
+        sc.teardown()
+    return sc
+
+
 def scenario_server_down(workdir: pathlib.Path) -> Scenario:
     sc = Scenario("server-down", workdir)
     try:
@@ -212,7 +286,8 @@ def scenario_unknown_machine(workdir: pathlib.Path) -> Scenario:
 def run_pass(n: int) -> bool:
     workdir = pathlib.Path(tempfile.mkdtemp(prefix=f"m0-pass{n}-", dir=BUILD))
     ok = True
-    for fn in (scenario_spine, scenario_server_down, scenario_unknown_machine):
+    for fn in (scenario_spine, scenario_run_com, scenario_type_missing,
+               scenario_server_down, scenario_unknown_machine):
         sc = fn(workdir)
         status = "PASS" if not sc.failures else "FAIL"
         print(f"  [{status}] {sc.name}")
