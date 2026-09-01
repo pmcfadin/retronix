@@ -191,6 +191,9 @@ All formerly open questions are resolved or explicitly deferred. Decisions live 
 - Profile store: one committed JSON file per machine; machine IDs sequential from 1001 against an explicit high-water mark, never reused.
 - Refine loop: probe → exact entirely on the existing HELLO payload — no new verbs, codes, or formats.
 - Second emulator platform: trs80gp for the TRS-80 Model 4, taken as a checksum-pinned binary rather than built from source, with the sdltrs + socat relay as the fallback (ADR-0007).
+- Library write path: FWRITE and FDEL, idempotent by the same rule as every wire verb since ADR-0003 — chunked writes carry a total size applied on every chunk, deletes of an absent file are not an error (ADR-0008).
+- Getting a file into the library is always two acts, never one: a machine pushes to a volume it owns; an operator's `library.py publish` promotes it into the shared library and the catalog. The machine never writes a shared volume, on the wire, under any circumstance (ADR-0008).
+- The library's catalog is a versioned, fixed-stride index file on the library volume, browsed with the existing FREAD verb — no catalog wire verb (ADR-0008).
 
 **Deferred (deliberately, nothing downstream blocked):**
 - BDOS/CCP residency vs. paging on RAM-tight machines — the emulator will answer this empirically during implementation.

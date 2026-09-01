@@ -9,10 +9,50 @@ library, and ROM foundry.
 **Volume**:
 A named unit of storage exported by the server. One server can export
 several volumes; a machine sees a volume only once it is bound to a drive
-letter. Every volume is either **shared** (read-only, any machine may bind
-it) or **owned** (writable, bound by at most one machine; the server
-enforces exclusivity at bind time).
+letter. Every volume is either **shared** — read-only on the wire, any
+machine may bind it, and the only way its contents ever change is a
+server-side act (publishing) — or **owned** — read-write over the wire, but
+by exactly one machine; the server enforces exclusivity by binding it to no
+one else.
 _Avoid_: share, remote disk, network filesystem
+
+**Library**:
+The one shared volume the server publishes homebrew into: the published COM
+files themselves, plus the Catalog that indexes them. Browsed like any other
+shared volume — FREAD and `type` work on it before `lib` does anything
+smarter with the same bytes.
+_Avoid_: repository, archive (both imply version history the library
+doesn't keep)
+
+**Catalog**:
+The versioned, fixed-stride index file the library volume carries — one
+record per published file: name, size, description, source machine, publish
+date. Maintained only by the publish step, never by a machine; `lib` FREADs
+and parses it the way `type` reads any other file.
+_Avoid_: manifest, database (it's one file, parseable by an 8080 without a
+query engine)
+
+**Publish / Unpublish**:
+The server-side act, through the `library.py` CLI, that promotes a file from
+a machine's owned volume into the library and updates the Catalog to match
+— or removes one. Never something a machine does; the wire has no verb for
+it.
+_Avoid_: upload, deploy (both suggest the machine initiates it)
+
+**Push**:
+A machine writing a file to a volume it owns, over the wire (FWRITE). The
+machine-side half of getting homebrew into the library — Publish is the
+server-side half that has to happen afterward.
+_Avoid_: upload, save (save undersells that this is a network write with the
+same idempotency rules as everything else on the wire)
+
+**Install**:
+The machine-side copy of a file from the library into a drive the machine
+owns: an FREAD from the library composed with an FWRITE to the owned drive,
+through the TPA, chunk by chunk. `cp` is the same code path generalized to
+any two drives.
+_Avoid_: download (implies a different mechanism than the FREAD it actually
+is)
 
 **Boot Ladder**:
 The ordered fallback sequence a machine walks at power-on: self-test →
