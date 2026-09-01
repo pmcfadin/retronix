@@ -20,31 +20,35 @@
 ;   0003  iobyte, 0004 drive/user
 ;   0005  JMP bdoshim       (the canonical BDOS entry)
 ;   0100  TPA, up to TPATOP
-;   E000  monitor + BIOS (this file's main body)
+;   E000  cold entry: JMP into the relocated monitor body
+;   E100  CFGBLK: foundry-stamped config block (ADR-0006, 512 bytes)
+;   E300  monitor + BIOS main body (this file's bulk)
 ;   FE00  stack top
 ;
 ; Devices (SIMH AltairZ80):
 ;   console: SIO line 0, status 10h (bit0 rx, bit1 tx), data 11h
 ;   wire:    M2SIO1 ACIA, status/ctl 12h (bit0 RDRF, bit1 TDRE), data 13h
 ;
-; Link config and machine ID are assembled-in constants — the image is
-; born configured (ADR-0005, in miniature).
+; Machine ID and link config (reset/mode bytes) come from CFGBLK, stamped
+; by the foundry at mint time (ADR-0006) — never assembly-time constants.
+; WSTAT/WDATA remain assembled equates: they name the ACIA's physical
+; wiring on this platform, which an 8080 IN/OUT instruction can only
+; address as an immediate operand, not a runtime value.
 
 	.8080
 
 	include 'machine/protocol.inc'
+	include 'machine/config.inc'
 
 CONSS	equ	10h		; console status port
 CONSD	equ	11h		; console data port
 CRDY	equ	01h		; console rx ready
 CTXR	equ	02h		; console tx ready
 
-WSTAT	equ	12h		; wire ACIA status/control
-WDATA	equ	13h		; wire ACIA data
+WSTAT	equ	12h		; wire ACIA status/control (physical wiring;
+WDATA	equ	13h		; wire ACIA data           see header note)
 WRDRF	equ	01h		; wire rx ready
 WTDRE	equ	02h		; wire tx ready
-WRESET	equ	03h		; ACIA master reset
-WMODE	equ	15h		; 8N1, /16 clock
 WCARR	equ	0Ch		; /DCD + /CTS, active low: 0 = peer there
 
 STACK	equ	0FE00h
@@ -75,24 +79,53 @@ DENTSZ	equ	20		; drive, kind, flags, name length, DNAMEL name
 
 	org	0E000h
 
-cold:	di
+cold:	jmp	coldbdy		; entry address stays fixed; the body moves
+				; to make room for CFGBLK (ADR-0006, 3.1)
+
+	org	CFGBLK		; 0E100h: reserved for the foundry-stamped
+	ds	CFGBLKRES	; config block; zero until minted, which is
+				; exactly what makes an unstamped template
+				; fail blkval's magic check honestly
+
+	org	0E300h
+
+coldbdy:
+	di
 	lxi	sp,STACK
-	mvi	a,WRESET	; wire ACIA first: raising RTS/DTR starts
-	out	WSTAT		; the (async) link bring-up while we boot
-	mvi	a,WMODE
-	out	WSTAT
-	lxi	h,mbann		; banner: first visible act after power-on
-	call	puts
-	call	cpudet		; self-test inventory
-	sta	INVCPU
-	call	ramsz
-	sta	INVRAM
 	xra	a
+	sta	CFGOK
 	sta	LINKUP
 	sta	MAPCNT
 	mvi	a,0FFh
 	sta	DEFDRV
-	call	hello		; HELLO at boot; carry set = no link
+	call	blkval		; block first, before the wire is touched at
+	jc	ctob		; all (D6): magic, version, checksum (3.2)
+	mvi	a,1
+	sta	CFGOK
+	call	wkick		; reset+mode from the block, in place of the
+				; WRESET/WMODE equates (3.3); wkick also
+				; kicks a second dial if the first leaves no
+				; carrier -- the emulator's outbound connect
+				; can complete during blkval and a reset
+				; issued after it lands drops the link with
+				; no auto-redial, so the retry (same shape
+				; as bindcmd's recovery) is load-bearing here
+	call	blkapply	; machine id: block -> HELLOP (3.3)
+	call	blkload		; DMAP/MAPCNT: block's cached map, before any
+				; wire traffic is attempted (3.4)
+ctob:	lxi	h,mbann		; banner: first visible act after power-on
+	call	puts
+	call	cpudet		; self-test inventory (needed for ls /dev
+	sta	INVCPU		; and HELLO regardless of block validity)
+	call	ramsz
+	sta	INVRAM
+	lda	CFGOK
+	ora	a
+	jnz	hello0
+	lxi	h,mcfgbad	; invalid/unstamped block (3.5): honest,
+	call	puts		; never dial with an unknown identity
+	jmp	lonly
+hello0:	call	hello		; HELLO at boot; carry set = no link
 	jc	lonly
 	mvi	a,1
 	sta	LINKUP
@@ -156,6 +189,115 @@ rmlp:	mov	b,m
 rmfail:	dcr	c
 rmdone:	mov	a,c
 	ret
+
+; -------------------------------------------------------- config block
+
+; Validate CFGBLK: magic, format version, and the checksum under the same
+; sum-to-zero rule a wire frame uses (CKSUM, protocol.inc) — reused here as
+; a standalone memory scan, since sadd/wrxs are coupled to actual wire I/O
+; and no wire traffic is allowed yet (D6). Carry set on any failure; an
+; unstamped template (all zero) fails the magic compare and takes exactly
+; this path (task 3.2).
+blkval:	lxi	h,CFGBLK+CFG_OFF_MAGIC
+	lxi	d,cfgmagic
+	mvi	b,CFG_LEN_MAGIC
+blkvm:	ldax	d
+	cmp	m
+	jnz	blkvbd
+	inx	h
+	inx	d
+	dcr	b
+	jnz	blkvm
+	lda	CFGBLK+CFG_OFF_VERSION
+	cpi	CFG_VERSION
+	jnz	blkvbd
+	lxi	h,CFGBLK
+	lxi	b,CFGBLKLEN
+	xra	a
+	sta	CKSUM
+blkvs:	lda	CKSUM
+	add	m
+	sta	CKSUM
+	inx	h
+	dcx	b
+	mov	a,b
+	ora	c
+	jnz	blkvs
+	lda	CKSUM
+	ora	a
+	jnz	blkvbd
+	ret
+blkvbd:	stc
+	ret
+
+; On a valid block: the machine id (4 bytes LE) into HELLOP, in place of
+; the assembled default (task 3.3).
+blkapply:
+	lxi	h,CFGBLK+CFG_OFF_MACHID
+	lxi	d,HELLOP
+	mvi	b,CFG_LEN_MACHID
+blka1:	mov	a,m
+	stax	d
+	inx	h
+	inx	d
+	dcr	b
+	jnz	blka1
+	ret
+
+; On a valid block: preload DMAP/MAPCNT from the block's cached map. The
+; cached map is exactly DMAP's own shape (design.md), so this is a
+; straight CFG_LEN_MAP-byte copy, not a parse (task 3.4). The first
+; preloaded entry claims DEFDRV, same convention as a HELLO response
+; (hok) — a later successful HELLO replaces this wholesale, never merges.
+blkload:
+	lxi	h,CFGBLK+CFG_OFF_MAP
+	lxi	d,DMAP
+	lxi	b,CFG_LEN_MAP
+blkl1:	mov	a,m
+	stax	d
+	inx	h
+	inx	d
+	dcx	b
+	mov	a,b
+	ora	c
+	jnz	blkl1
+	lda	CFGBLK+CFG_OFF_MAPCNT
+	cpi	DMAPN+1
+	jc	blkl2
+	mvi	a,DMAPN
+blkl2:	sta	MAPCNT
+	mvi	a,0FFh
+	sta	DEFDRV
+	lda	MAPCNT
+	ora	a
+	rz
+	lda	DMAP
+	sta	DEFDRV
+	ret
+
+; Reset+mode from the block (task 3.3), with one retry if carrier never
+; comes up. The emulator establishes the wire's outbound connection
+; asynchronously; if it happens to land while blkval is still running, the
+; reset this routine issues arrives after a live connection already
+; exists and drops it -- and the emulator's connect= does not auto-redial.
+; Re-issuing reset+mode is what kicks a fresh dial (same shape as
+; bindcmd's own recovery), so a second attempt lands clean either way:
+; nothing to drop the first time, or a fresh dial after the first drop.
+wkick:	lda	CFGBLK+CFG_OFF_LINK+1
+	out	WSTAT
+	lda	CFGBLK+CFG_OFF_LINK+2
+	out	WSTAT
+	in	WDATA		; clear any latched carrier-loss
+	call	wcwait		; bounded wait for carrier
+	rnc			; up already: no retry needed
+	lda	CFGBLK+CFG_OFF_LINK+1	; nobody there: kick a fresh dial
+	out	WSTAT
+	lda	CFGBLK+CFG_OFF_LINK+2
+	out	WSTAT
+	in	WDATA
+	jmp	wcwait		; carry ignored by the caller: hello's own
+				; bounded retry is what makes the honest
+				; final call
 
 ; ------------------------------------------------------- console io
 
@@ -864,27 +1006,49 @@ lsd2:	call	puts
 ; version, and says whose the Drive Map actually is (ADR-0005).
 cfgcmd:	lxi	h,mcfgid
 	call	puts
-	call	pmid
+	lda	CFGOK
+	ora	a
+	jz	cfgidbd
+	call	pmid		; the machine id blkapply copied off CFGBLK
+	jmp	cfgidok
+cfgidbd:
+	lxi	h,mcfgunk
+	call	puts
+cfgidok:
 	call	crlf
 	lxi	h,mcfgrom
 	call	puts
 	call	prom
 	call	crlf
-	lxi	h,mcfgl1	; the burned-in link config, read back from the
-	call	puts		; very equates the wire code uses
-	mvi	a,WSTAT
+	lxi	h,mcfgblk	; block validity + the format version stamped
+	call	puts
+	lda	CFGOK
+	ora	a
+	jz	cfgbdb
+	lxi	h,mcfgok
+	call	puts
+	lda	CFGBLK+CFG_OFF_VERSION
+	call	pdec8
+	call	crlf
+	lxi	h,mcfgl1	; the link config the foundry stamped, read
+	call	puts		; back off the block itself (task 3.6)
+	lda	CFGBLK+CFG_OFF_LINK
 	call	phexp
 	mvi	a,'/'
 	call	putc
-	mvi	a,WDATA
+	lda	CFGBLK+CFG_OFF_LINK
+	inr	a
 	call	phexp
 	lxi	h,mcfgl2
 	call	puts
-	mvi	a,WMODE		; the framing byte itself, so the decode beside
-	call	phexp		; it can be checked rather than trusted
+	lda	CFGBLK+CFG_OFF_LINK+2
+	call	phexp
 	lxi	h,mcfgl3
 	call	puts
-	lxi	h,mcfgst
+	jmp	cfg2
+cfgbdb:	lxi	h,mcfgbad2
+	call	puts
+cfg2:	lxi	h,mcfgst
 	call	puts
 	lda	LINKUP
 	ora	a
@@ -948,13 +1112,18 @@ pdec8:	mov	l,a
 ; truth is what keeps it from master-resetting the ACIA, which drops
 ; RTS/DTR and tears down the very connection it was about to use.
 bindcmd:
-	in	WDATA		; clear the latched carrier loss
+	lda	CFGOK		; no identity, no dial: same honesty as cold
+	ora	a		; boot (3.5) — bind must not touch the wire
+	jnz	bindwr		; with an unknown machine id either
+	lxi	h,mcfgbad
+	jmp	puts
+bindwr:	in	WDATA		; clear the latched carrier loss
 	call	wcwait		; then wait, bounded, for the real line state
 	jnc	bindrn		; carrier: touch nothing, just talk
-	mvi	a,WRESET	; nobody out there after a full wait, so there
-	out	WSTAT		; is no connection left to lose: re-init to
-	mvi	a,WMODE		; re-raise RTS/DTR and kick a fresh dial
-	out	WSTAT
+	lda	CFGBLK+CFG_OFF_LINK+1	; nobody out there after a full wait, so
+	out	WSTAT			; there is no connection left to lose:
+	lda	CFGBLK+CFG_OFF_LINK+2	; re-init from the block (3.3) to
+	out	WSTAT			; re-raise RTS/DTR and kick a fresh dial
 	in	WDATA
 	call	wcwait		; a frame sent before the dial lands goes
 				; on the floor unseen — the ACIA reports
@@ -1356,10 +1525,11 @@ c_use:	lxi	h,musage
 
 ; ----------------------------------------------------------- data
 
-; HELLO payload: machine id 1001 LE, ROM version, then the
-; self-test inventory, filled in at boot by hello.
-HELLOP:	db	0E9h,03h,00h,00h
-	db	0,3,0
+; HELLO payload: machine id (blkapply copies it off CFGBLK; zero here so
+; an invalid block is never mistaken for a real identity), ROM version,
+; then the self-test inventory, filled in at boot by hello.
+HELLOP:	db	0,0,0,0
+	db	0,4,0
 	db	0,0,0
 
 kwdir:	db	'DIR',0
@@ -1370,7 +1540,10 @@ kwcfg:	db	'CONFIG',0
 kwbind:	db	'BIND',0
 kwdev:	db	'/DEV',0
 
-mbann:	db	0Dh,0Ah,'RetroNix ROM 0.3.0 - M2 boot ladder',0Dh,0Ah,0
+mbann:	db	0Dh,0Ah,'RetroNix ROM 0.4.0 - M3 config block',0Dh,0Ah,0
+mcfgbad:
+	db	'config block unreadable - unminted or corrupt image; '
+	db	're-mint to fix',0Dh,0Ah,0
 mlink:	db	'link up: drive ',0
 mlink2:	db	': bound',0Dh,0Ah,0
 mlink0:	db	'link up: no network drives bound',0Dh,0Ah,0
@@ -1400,18 +1573,28 @@ mnobnd:	db	'  no network bindings',0Dh,0Ah,0
 mlsdev:	db	'ls: only /dev is listable in this ROM version',0Dh,0Ah,0
 
 mcfgid:	db	'machine id:  ',0
+mcfgunk:
+	db	'unknown (config block unreadable)',0
 mcfgrom:
 	db	'rom version: ',0
+mcfgblk:
+	db	'config block: ',0
+mcfgok:	db	'valid, format ',0
+mcfgbad2:
+	db	'UNREADABLE - unminted or corrupt image; re-mint to fix'
+	db	0Dh,0Ah,0
 mcfgl1:	db	'link config: wire acia, ports ',0
 mcfgl2:	db	', mode ',0
-; The decode below must track WMODE: 15h = 8 data bits, no parity,
-; 1 stop bit, /16 clock. The byte itself is printed beside it.
-mcfgl3:	db	' (8N1 /16), machine-initiated',0Dh,0Ah,0
+mcfgl3:	db	', machine-initiated',0Dh,0Ah,0
 mcfgst:	db	'link state:  ',0
 mlocal:	db	'local-only mode',0
 mcfgmap:
-	db	'drive map (the server profile owns it: change it there, '
-	db	'reconciled at hello)',0Dh,0Ah,0
+	db	'drive map (the server profile owns it while linked, '
+	db	'reconciled at hello; the config block is changed only by '
+	db	're-minting)',0Dh,0Ah,0
+
+cfgmagic:
+	db	'RNXC'
 
 mbindok:
 	db	'link up - bound drives:',0Dh,0Ah,0
@@ -1441,6 +1624,7 @@ PPTR:	ds	2
 PLEN:	ds	1
 INVCPU:	ds	1
 INVRAM:	ds	1
+CFGOK:	ds	1		; 1 = CFGBLK validated at cold boot, else 0
 LINKUP:	ds	1
 MAPCNT:	ds	1
 DEFDRV:	ds	1

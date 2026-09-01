@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "machine_id": 1001,
+  "identity": {
+    "make": "MITS",
+    "model": "Altair 8800 (SIMH AltairZ80)",
+    "notes": ""
+  },
+  "platform": "altair-m2sio",
+  "rom_template": "build/retronix.bin",
+  "link": {
+    "port_base": 18,
+    "reset": 3,
+    "mode": 21,
+    "baud": 0
+  },
+  "drive_map": {
+    "A": "library"
+  },
+  "state": "exact",
+  "hardware": {
+    "declared": {
+      "cpu": 0,
+      "ram_kb": 63,
+      "console": 0
+    },
+    "observed": {
+      "cpu": 0,
+      "ram_kb": 63,
+      "console": null,
+      "rom_version": "0.4.0",
+      "last_seen": 1788254050.6214788
+    }
+  },
+  "mint": {
+    "block_checksum": 174,
+    "block_sha256": "46803528391ad9a3d62737f742c7ff0cbda777c08f163a7c2f18306f77ec083f",
+    "minted_at": "2026-09-01T09:14:08.424259+00:00",
+    "rom_version": "0.4.0",
+    "stamped": {
+      "link": {
+        "port_base": 18,
+        "reset": 3,
+        "mode": 21,
+        "baud": 0
+      },
+      "drive_map": {
+        "A": "library"
+      }
+    }
+  },
+  "needs_remint": false
+}

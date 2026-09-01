@@ -234,8 +234,20 @@ prompt.
 
 ## Open Questions
 
-- Does `-ip :PORT` deliver keystrokes to a custom ROM? Task 1.1; the answer
-  decides whether the Model 4 scenarios drive the prompt or only observe it.
+- ~~Does `-ip :PORT` deliver keystrokes to a custom ROM?~~ **Closed by task
+  1.1, negatively and doubly**: `-ip` stalls on a stock-ROM hook that our ROM
+  does not have, and `-rB` is accepted at the argument layer but wired to
+  nothing on `-m4` (the machine only ever had one RS-232 — our wire). There
+  is no scriptable console-input channel independent of the wire.
+  **Resolution**: the Model 4 template implements a real keyboard-matrix
+  driver (usable interactively in trs80gp's window, and the M5 real-iron
+  driver anyway) and additionally prints a boot-time auto-report — the
+  `config` block report and `ls /dev` — unprompted after banner and HELLO.
+  Harness scenarios on Model 4 assert on boot output over the printer tap
+  and never type; the interactive prompt remains for humans. See
+  docs/research/trs80-model4-emulation.md for the verified evidence,
+  including the `open -a ... --args` invocation requirement and the tap's
+  sparse-write loss (console output must stream, not one-shot).
 - Does the Model 4 template fit under `37FF` with the block, the relocator,
   the TR1865 driver, and enough of the shell to be worth booting? The research
   notes trs80gp's `-rom` size behavior is loosely specified and assumes the

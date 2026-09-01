@@ -1,0 +1,6 @@
+{
+  "library": {
+    "path": "volumes/library",
+    "kind": "shared"
+  }
+}

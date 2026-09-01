@@ -4,6 +4,11 @@
 # altairz80: https://github.com/open-simh/simh (built NOVIDEO=1 — the sim is
 #            headless; SDL video would add a runtime dependency and, on macOS,
 #            a link failure from a missing -lz)
+#
+# trs80gp is NOT built here. It is closed-source binary-only freeware (see
+# docs/adr/0007-trs80gp-pinned-binary.md), so there is no source to build
+# against — it is fetched and checksum-pinned instead by
+# tools/fetch-trs80gp.sh, invoked at the end of this script.
 set -e
 cd "$(dirname "$0")"
 mkdir -p bin work
@@ -25,3 +30,6 @@ fi
 
 ../bin/zmac --version
 echo "show version" | ../bin/altairz80 | head -1
+
+cd ..
+./fetch-trs80gp.sh

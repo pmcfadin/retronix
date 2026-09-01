@@ -1,5 +1,11 @@
 .DS_Store
 build/
+# Mint output (server/foundry.py) is never committed (ADR-0006, design.md
+# "Minting stamps a config block"); already covered by build/ above, named
+# explicitly so the rule doesn't depend on that.
+build/mint/
 tools/bin/
 __pycache__/
 *.pyc
+tools/work/
+tools/trs80gp.app/

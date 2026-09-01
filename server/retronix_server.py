@@ -1,7 +1,15 @@
-"""RetroNix M0 server: static profiles, one shared volume, HELLO + DIR.
+"""RetroNix server: per-machine profile store, shared volumes, HELLO/DIR/FREAD.
 
 The structured JSONL log is the project's test oracle (PRD §9): one record
 per request/response pair, asserted on by the harness — never terminal text.
+
+Profiles live one-per-file under `--machines-dir` (design.md's migration
+plan, server/machine_store.py); volume definitions live in their own file
+(`--volumes-file`), separate from the machine store (specs/server/spec.md
+"Machine profiles live in a per-machine store"). The server never creates,
+edits identity in, or otherwise writes a profile except through
+`reconcile.reconcile_hello` on a HELLO — every other edit belongs to
+`server/foundry.py` (ADR-0006, specs/foundry/spec.md).
 """
 from __future__ import annotations
 
@@ -12,7 +20,9 @@ import socket
 import sys
 import time
 
+import machine_store as ms
 import protocol as p
+import reconcile as rc
 
 DRIVE_NAMES = "ABCDEFGHIJKLMNOP"
 
@@ -71,43 +81,52 @@ class Volume:
         return None
 
 
-class Profile:
-    def __init__(self, machine_id: int, spec: dict, volumes: dict[str, Volume]):
-        self.machine_id = machine_id
-        self.make = spec.get("make", "")
-        self.model = spec.get("model", "")
-        # drive map: letter -> Volume
-        self.drive_map = {
-            letter.upper(): volumes[vol] for letter, vol in spec["drive_map"].items()
-        }
-        self.reported_rom: tuple | None = None
-        self.reported_inventory: dict | None = None
-
-
-def load_config(path: pathlib.Path) -> tuple[dict[int, Profile], dict[str, Volume]]:
+def load_volumes(path: pathlib.Path) -> dict[str, Volume]:
+    """Volume definitions live in their own file, separate from the machine
+    store (design.md's migration plan, specs/server/spec.md)."""
     cfg = json.loads(path.read_text())
     base = path.parent
-    volumes = {
+    return {
         name: Volume(name, (base / v["path"]).resolve(), v["kind"])
-        for name, v in cfg["volumes"].items()
+        for name, v in cfg.items()
     }
-    profiles = {
-        int(mid): Profile(int(mid), spec, volumes)
-        for mid, spec in cfg["machines"].items()
-    }
-    return profiles, volumes
+
+
+def resolve_drive_map(profile: dict, volumes: dict[str, Volume]) -> dict[str, Volume]:
+    """profile['drive_map'] (letter -> volume name) resolved to Volume
+    objects, skipping any binding whose volume isn't in the loaded set.
+
+    The machine must still boot on an operator error like this — a missing
+    volume drops only that one binding — but the drop is silent on the wire
+    (the machine just sees an unbound letter), so it is logged loudly here
+    to stderr rather than disappearing entirely.
+    """
+    out = {}
+    for letter, vol_name in profile["drive_map"].items():
+        vol = volumes.get(vol_name)
+        if vol is None:
+            print(f"retronix_server: WARNING: machine {profile['machine_id']} "
+                  f"drive {letter.upper()}: volume {vol_name!r} not found in "
+                  "the volumes file; binding dropped", file=sys.stderr)
+            continue
+        out[letter.upper()] = vol
+    return out
 
 
 class Session:
     """Per-connection state: which machine spoke HELLO."""
 
     def __init__(self):
-        self.profile: Profile | None = None
+        self.machine_id: int | None = None
+        self.profile: dict | None = None       # the reconciled profile dict
+        self.drive_map: dict[str, Volume] = {}  # letter -> Volume, from HELLO
 
 
 class Server:
-    def __init__(self, profiles: dict[int, Profile], log_path: pathlib.Path):
-        self.profiles = profiles
+    def __init__(self, machines_dir: pathlib.Path, volumes: dict[str, Volume],
+                log_path: pathlib.Path):
+        self.machines_dir = machines_dir
+        self.volumes = volumes
         self.log_path = log_path
         self.log_file = open(log_path, "a", buffering=1)
 
@@ -140,39 +159,57 @@ class Server:
             return p.encode(p.FHELLO | p.FRESP, bytes((p.RBADREQ,)))
         machine_id = int.from_bytes(payload[0:4], "little")
         rom = (payload[4], payload[5], payload[6])
-        inventory = {"cpu": "Z80" if payload[7] else "8080",
-                     "ram_kb": payload[8], "serial_up": bool(payload[9])}
-        profile = self.profiles.get(machine_id)
+        cpu_code, ram_kb, serial_up = payload[7], payload[8], bool(payload[9])
+        inventory = {"cpu": "Z80" if cpu_code else "8080",
+                     "ram_kb": ram_kb, "serial_up": serial_up}
+
+        try:
+            profile = ms.load_profile(self.machines_dir, machine_id)
+        except ms.ProfileError as e:
+            # The wire answer is the same as unknown-machine either way
+            # (RUNKMCH is the honest thing to say to the machine), but a
+            # malformed profile is a server-side problem, not a genuinely
+            # unprovisioned id — flag it distinctly on stderr so an operator
+            # doesn't mistake one for the other.
+            print(f"retronix_server: WARNING: machine {machine_id}: profile "
+                  f"failed to load: {e}", file=sys.stderr)
+            profile = None
         if profile is None:
             self.log(verb="hello", machine_id=machine_id,
                      result=p.RESULT_NAMES[p.RUNKMCH])
             return p.encode(p.FHELLO | p.FRESP, bytes((p.RUNKMCH,)))
 
-        profile.reported_rom = rom
-        profile.reported_inventory = inventory
-        session.profile = profile
+        # HELLO reconciliation (ADR-0005, server/reconcile.py): the only
+        # write the running server performs, and it never touches identity,
+        # drive map, link config, or mint state.
+        rc.reconcile_hello(profile, rom_version=rom, cpu=cpu_code, ram_kb=ram_kb)
+        ms.save_profile(self.machines_dir, profile)
 
-        body = bytearray((p.ROK, len(profile.drive_map)))
-        for letter, vol in sorted(profile.drive_map.items()):
+        session.machine_id = machine_id
+        session.profile = profile
+        session.drive_map = resolve_drive_map(profile, self.volumes)
+
+        body = bytearray((p.ROK, len(session.drive_map)))
+        for letter, vol in sorted(session.drive_map.items()):
             flags = 0x01 if vol.kind == "shared" else 0x00  # bit0: read-only
             name = vol.name.encode("ascii")
             body += bytes((DRIVE_NAMES.index(letter), 0x00, flags, len(name)))
             body += name
         self.log(verb="hello", machine_id=machine_id,
                  rom_version=".".join(map(str, rom)), inventory=inventory,
-                 drive_map={l: v.name for l, v in profile.drive_map.items()},
+                 drive_map={l: v.name for l, v in session.drive_map.items()},
                  result=p.RESULT_NAMES[p.ROK])
         return p.encode(p.FHELLO | p.FRESP, bytes(body))
 
     def handle_dir(self, session: Session, payload: bytes) -> bytes:
-        machine_id = session.profile.machine_id if session.profile else None
-        if session.profile is None or len(payload) != 1:
+        machine_id = session.machine_id
+        if session.machine_id is None or len(payload) != 1:
             self.log(verb="dir", machine_id=machine_id,
                      result=p.RESULT_NAMES[p.RBADREQ])
             return p.encode(p.FDIR | p.FRESP, bytes((p.RBADREQ,)))
         drive_index = payload[0]
         letter = DRIVE_NAMES[drive_index] if drive_index < 16 else "?"
-        vol = session.profile.drive_map.get(letter)
+        vol = session.drive_map.get(letter)
         if vol is None:
             self.log(verb="dir", machine_id=machine_id, drive=letter,
                      result=p.RESULT_NAMES[p.RUNBND])
@@ -190,8 +227,8 @@ class Server:
         return p.encode(p.FDIR | p.FRESP, bytes(body))
 
     def handle_fread(self, session: Session, payload: bytes) -> bytes:
-        machine_id = session.profile.machine_id if session.profile else None
-        if session.profile is None or len(payload) != p.FREAD_REQ_LEN:
+        machine_id = session.machine_id
+        if session.machine_id is None or len(payload) != p.FREAD_REQ_LEN:
             self.log(verb="fread", machine_id=machine_id,
                      result=p.RESULT_NAMES[p.RBADREQ])
             return p.encode(p.FREAD | p.FRESP, bytes((p.RBADREQ,)))
@@ -200,7 +237,7 @@ class Server:
         name = parse_83(payload[1:12])
         offset = int.from_bytes(payload[12:16], "little")
         length = int.from_bytes(payload[16:18], "little")
-        vol = session.profile.drive_map.get(letter)
+        vol = session.drive_map.get(letter)
         if vol is None:
             self.log(verb="fread", machine_id=machine_id, drive=letter,
                      result=p.RESULT_NAMES[p.RUNBND])
@@ -260,8 +297,11 @@ class Server:
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="RetroNix M0 server")
-    ap.add_argument("--config", default=str(pathlib.Path(__file__).parent / "profiles.json"))
+    ap = argparse.ArgumentParser(description="RetroNix server")
+    ap.add_argument("--machines-dir",
+                    default=str(pathlib.Path(__file__).parent / "machines"))
+    ap.add_argument("--volumes-file",
+                    default=str(pathlib.Path(__file__).parent / "volumes.json"))
     ap.add_argument("--port", type=int, default=5810)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--log", default="build/server-log.jsonl")
@@ -270,8 +310,8 @@ def main(argv=None):
 
     log_path = pathlib.Path(args.log)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    profiles, _ = load_config(pathlib.Path(args.config))
-    server = Server(profiles, log_path)
+    volumes = load_volumes(pathlib.Path(args.volumes_file))
+    server = Server(pathlib.Path(args.machines_dir), volumes, log_path)
     ready = pathlib.Path(args.ready_file) if args.ready_file else None
     try:
         server.serve(args.host, args.port, ready)

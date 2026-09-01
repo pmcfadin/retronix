@@ -37,9 +37,9 @@ The harness SHALL include a scenario that walks the refine loop with no manual e
 - **WHEN** the probe-loop scenario executes
 - **THEN** it exits 0, having shown the flag set after the first boot, cleared by the re-mint, and the profile `exact` after the second boot
 
-#### Scenario: The second mint differs from the first
+#### Scenario: Re-minting is deterministic and block-scoped
 - **WHEN** the two mints of that profile are compared
-- **THEN** they differ only inside the config block, and the second carries the reconciled values
+- **THEN** every byte outside the config block is identical, and any difference lies inside the block — noting that hardware facts reconciled by the refine loop live in the profile, not the block, so for a hardware-only refinement the two blocks are legitimately byte-identical
 
 ### Requirement: Drift after minting is detected at HELLO
 The harness SHALL include a scenario that edits a profile after its image was minted, boots that image, and passes only when the server raises `needs-remint` while still answering the HELLO with the edited drive map — proving the running session is correct even though the burned ROM is stale.
