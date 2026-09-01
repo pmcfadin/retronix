@@ -23,16 +23,27 @@ unconfigured machine never probes the wire on its own.
 _Avoid_: boot sequence (undersells the fallback guarantee)
 
 **Machine Profile**:
-The server-side record of one physical machine: make, model, discovered
-hardware details, machine ID, drive map, and owned volumes. Created before
-the machine ever boots RetroNix; refined by HELLO report-backs.
+The server-side record of one physical machine: make, model, hardware facts
+both declared and observed, machine ID, ROM template, link config, drive map,
+owned volumes, and mint state. One file per machine, committed to the repo.
+Created before the machine ever boots RetroNix; refined by HELLO report-backs.
 _Avoid_: device record, registration
 
 **Machine ID**:
 The identity the foundry bakes into minted boot media, assigned at profile
-creation. Presented in every HELLO; the key under which the server files
-the profile.
+creation from a sequential high-water mark starting at 1001 and never reused,
+even after a machine is retired. Presented in every HELLO; the key under which
+the server files the profile.
 _Avoid_: serial number, hostname
+
+**Probe / Exact**:
+The two states a machine profile can be in. A profile is born **probe**: some
+hardware facts in it are declared guesses rather than observations. It becomes
+**exact** after a boot whose HELLO report-back matches the profile with no
+drift. Exact is a claim about agreement between the profile and the machine,
+not about how much detail the profile holds.
+_Avoid_: draft/final, unverified/verified (they read as "the profile is
+wrong", when it is merely unconfirmed)
 
 **HELLO**:
 The machine-initiated exchange that opens every booted session: the machine
@@ -41,15 +52,43 @@ answers with the profile's current drive map and flags drift for re-mint.
 _Avoid_: handshake (undersells the reconciliation), discovery (config
 decides; nothing is being discovered)
 
+**Needs-remint**:
+The drift flag the server raises at HELLO when what the machine reports — its
+hardware inventory, its ROM version, or the contents of its config block —
+diverges from the profile. It says the boot media is stale, not that anything
+is broken, and it clears only when a fresh mint is stamped from the
+reconciled profile.
+_Avoid_: dirty, out of sync (both read as a fault; the profile is right and
+the ROM is merely older)
+
 **Mint**:
 The foundry act of generating boot media — an EPROM image or boot floppy
-image — from a machine profile, with BIOS, link config, and machine ID
-baked in. A first mint for unpredictable hardware is a probe build.
+image — from a machine profile: copy the platform's ROM template, stamp the
+config block, write the image out. No assembler runs on this path, so a mint
+is byte-deterministic (ADR-0006). The first mint for a probe profile carries
+declared facts and expects to be re-minted once observations arrive.
 _Avoid_: burn (that's what the human does with the minted image), export
 
+**ROM Template**:
+The single canonical ROM image per platform that minting copies — BIOS,
+shell, and an unstamped config block, built from source by the ordinary
+build. Platform-specific, never machine-specific: nothing in a template names
+a machine.
+_Avoid_: base image, skeleton, blank ROM (a template is a working ROM)
+
+**Config Block**:
+The reserved, fixed-address, versioned region of a ROM template that minting
+stamps: magic, block-format version, machine ID, link config, a cached copy of
+the drive map, and a checksum. The burned-in tier of ADR-0005 made concrete —
+the BIOS reads its identity here rather than from assembly-time constants, and
+drift is a byte-for-byte comparison of profile against block.
+_Avoid_: header, config area, NVRAM (nothing here is writable by the machine)
+
 **Foundry**:
-The server subsystem that mints boot media from machine profiles. The entry
-point of provisioning, not a graduation step: machines are born configured.
+The subsystem that mints boot media from machine profiles, driven by an
+operator CLI. The entry point of provisioning, not a graduation step: machines
+are born configured. Profiles are created and edited only through the foundry;
+the running server reads them and never writes them.
 _Avoid_: ROM builder, image generator
 
 **Local-Only Mode**:

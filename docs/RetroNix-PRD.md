@@ -185,6 +185,12 @@ All formerly open questions are resolved or explicitly deferred. Decisions live 
 - Shell namespace: `/<drive>/<file>`, no fake hierarchy (ADR-0004).
 - Config: link config burned locally; drive map server-authoritative, reconciled at HELLO in three tiers; config-only over the wire in v1 (ADR-0005).
 - Invariant: the ROM alone must always boot to a usable local-only prompt — the wire is never load-bearing for boot.
+- Minting: one ROM template per platform, copied and stamped with a fixed-address, versioned config block (magic, block version, machine ID, link config, cached drive map, checksum). No assembler on the mint path; mints are byte-deterministic and drift is a byte comparison (ADR-0006).
+- Machine identity: read from the stamped block at cold boot, not from assembly-time constants. The block's cached drive map pre-populates the retained map before the wire is touched, so local-only mode shows intended bindings as dead rather than an empty map (ADR-0006).
+- Operator surface: a foundry CLI (`new`, `list`, `show`, `mint`) owns every profile mutation; the running server only reads the store and writes back reconciliation results.
+- Profile store: one committed JSON file per machine; machine IDs sequential from 1001 against an explicit high-water mark, never reused.
+- Refine loop: probe → exact entirely on the existing HELLO payload — no new verbs, codes, or formats.
+- Second emulator platform: trs80gp for the TRS-80 Model 4, taken as a checksum-pinned binary rather than built from source, with the sdltrs + socat relay as the fallback (ADR-0007).
 
 **Deferred (deliberately, nothing downstream blocked):**
 - BDOS/CCP residency vs. paging on RAM-tight machines — the emulator will answer this empirically during implementation.
